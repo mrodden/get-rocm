@@ -17,4 +17,4 @@ jobs:
       - uses: actions/setup-python@v5
       - run: sudo python3 get-rocm.py
       - run: ls -la /opt/
-      - run: /opt/rocm/bin/rocminfo
+      - run: python3 rocm-info.py
