@@ -15,4 +15,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-      - run: python3 get-rocm.py
+      - run: sudo python3 get-rocm.py
