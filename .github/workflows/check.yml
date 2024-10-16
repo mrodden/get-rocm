@@ -10,11 +10,11 @@ on:
 
 jobs:
   works-as-advertised:
-    name: "run get-rocm.py and validate install"
+    name: "run get-rocm github action and validate"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-      - run: sudo python3 get-rocm.py
-      - run: ls -la /opt/
+      - uses: jlumbroso/free-disk-space@v1
+      - uses: mrodden/get-rocm@master
       - run: python3 rocm-info.py
