@@ -1,0 +1,20 @@
+---
+name: "get-rocm"
+description: "Install ROCm on your Linux environment"
+inputs:
+  rocm_version:
+    description:
+      "ROCm Version to install, e.g. 6.0.3"
+    required: false
+    default: "latest"
+branding:
+  color: "black"
+  icon: "check-circle"
+runs:
+  using: composite
+  steps:
+    - name: get-rocm
+      run: sudo python3 get-rocm.py --rocm-version=$INPUT_ROCM_VERSION
+      shell: bash
+      env:
+         INPUT_ROCM_VERSION: ${{ inputs.rocm_version }}
