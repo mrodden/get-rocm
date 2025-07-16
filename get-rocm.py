@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 # Copyright 2024 The JAX Authors.
-# Copyright 2024 Mathew Odden <mathewrodden@gmail.com>
+# Copyright 2025 Mathew Odden <mathewrodden@gmail.com>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,7 +28,16 @@ import urllib.request
 LOG = logging.getLogger(__name__)
 
 
+class RocmInstallException(Exception):
+    pass
+
+
 def latest_rocm():
+    """
+    Retrieve and return a version of the newest release from repo.radeon.com
+
+    Returns a string of the form X.Y.Z
+    """
     dat = urllib.request.urlopen(
         "https://api.github.com/repos/rocm/rocm/releases/latest"
     ).read()
@@ -38,6 +47,7 @@ def latest_rocm():
 
 
 def os_release_meta():
+    """Read /etc/os-release metadata and return as key-value pairs."""
     try:
         os_rel = open("/etc/os-release").read()
 
@@ -54,6 +64,10 @@ def os_release_meta():
 
 
 class System(object):
+    """
+    Class to abstract the package manager and other
+    OS dependent operations.
+    """
 
     def __init__(self, pkgbin, rocm_package_list):
         self.pkgbin = pkgbin
@@ -71,7 +85,7 @@ class System(object):
         if self.pkgbin == "apt":
             env["DEBIAN_FRONTEND"] = "noninteractive"
 
-        LOG.info("Running %r" % cmd)
+        LOG.info("Running %r", cmd)
         subprocess.check_call(cmd, env=env)
 
     def install_rocm(self):
@@ -112,6 +126,12 @@ RHEL8 = System(
 
 
 def parse_version(version_str):
+    """
+    Parse a ROCm version string into a Version type.
+
+    >>> print(parse_version("1.2.3"))
+    ... Version(major=1, minor=2, rev=3)
+    """
     if isinstance(version_str, str):
         parts = version_str.split(".")
         rv = type("Version", (), {})()
@@ -129,6 +149,11 @@ def parse_version(version_str):
 
 
 def get_system():
+    """
+    Factory function for System instances.
+
+    Returns a System object for the current host OS type.
+    """
     md = os_release_meta()
 
     if md["ID"] == "ubuntu":
@@ -138,7 +163,7 @@ def get_system():
         if md["PLATFORM_ID"] == "platform:el8":
             return RHEL8
 
-    raise Exception("No system for %r" % md)
+    raise RocmInstallException("No system for %r" % md)
 
 
 def _setup_internal_repo(system, rocm_version, job_name, build_num):
@@ -162,7 +187,7 @@ def _setup_internal_repo(system, rocm_version, job_name, build_num):
         "--amdgpu-build=%s" % amdgpu_build,
         "--rocm-build=%s/%s" % (job_name, build_num),
     ]
-    LOG.info("Running %r" % cmd)
+    LOG.info("Running %r", cmd)
     subprocess.check_call(cmd)
 
     cmd = [
@@ -176,11 +201,13 @@ def _setup_internal_repo(system, rocm_version, job_name, build_num):
     if system.pkgbin == "apt":
         env["DEBIAN_FRONTEND"] = "noninteractive"
 
-    LOG.info("Running %r" % cmd)
+    LOG.info("Running %r", cmd)
     subprocess.check_call(cmd, env=env)
 
 
 def install_rocm(rocm_version, job_name=None, build_num=None):
+    """Download and install the requested version of ROCm."""
+
     s = get_system()
 
     if job_name and build_num:
@@ -191,7 +218,7 @@ def install_rocm(rocm_version, job_name=None, build_num=None):
         elif s == UBUNTU:
             setup_repos_ubuntu(rocm_version)
         else:
-            raise Exception("Platform not supported")
+            raise RocmInstallException("Platform not supported")
 
     s.install_rocm()
 
@@ -246,7 +273,7 @@ def _build_installer_url(rocm_version, metadata):
 
         url = "%s/amdgpu-rpm/rhel/%s" % (base_url, package_name)
     else:
-        raise Exception("Platform not supported: %r" % md)
+        raise RocmInstallException("Platform not supported: %r" % md)
 
     return url, package_name
 
@@ -259,6 +286,7 @@ Pin-Priority: 600
 
 
 def setup_repos_ubuntu(rocm_version_str):
+    """Configure an apt sources list entry for ROCm."""
 
     rv = parse_version(rocm_version_str)
 
@@ -300,6 +328,7 @@ def setup_repos_ubuntu(rocm_version_str):
 
 
 def setup_repos_el8(rocm_version_str):
+    """Configure a yum repo entry for ROCm."""
 
     rv = parse_version(rocm_version_str)
 
