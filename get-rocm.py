@@ -69,9 +69,10 @@ class System(object):
     OS dependent operations.
     """
 
-    def __init__(self, pkgbin, rocm_package_list):
+    def __init__(self, pkgbin, rocm_package_list, amdgpu_package_list):
         self.pkgbin = pkgbin
         self.rocm_package_list = rocm_package_list
+        self.amdgpu_package_list = amdgpu_package_list
 
     def install_packages(self, package_specs):
         cmd = [
@@ -88,12 +89,16 @@ class System(object):
         LOG.info("Running %r", cmd)
         subprocess.check_call(cmd, env=env)
 
-    def install_rocm(self):
+    def install_rocm(self, install_amdgpu=True):
+        if install_amdgpu:
+            self.install_packages(self.amdgpu_package_list)
+
         self.install_packages(self.rocm_package_list)
 
 
 UBUNTU = System(
     pkgbin="apt",
+    amdgpu_package_list=[],
     rocm_package_list=[
         "rocm-dev",
         "rocm-libs",
@@ -103,8 +108,10 @@ UBUNTU = System(
 
 RHEL8 = System(
     pkgbin="dnf",
-    rocm_package_list=[
+    amdgpu_package_list=[
         "libdrm-amdgpu",
+    ],
+    rocm_package_list=[
         "rocm-dev",
         "rocm-ml-sdk",
         "miopen-hip ",
@@ -166,27 +173,32 @@ def get_system():
     raise RocmInstallException("No system for %r" % md)
 
 
-def _setup_internal_repo(system, rocm_version, job_name, build_num):
+def _setup_internal_repo(
+    system, rocm_version, job_name, build_num, install_amdgpu=True
+):
     # wget is required by amdgpu-repo
     system.install_packages(["wget"])
 
     install_amdgpu_installer_internal(rocm_version)
 
-    amdgpu_build = (
-        urllib.request.urlopen(
-            "http://rocm-ci.amd.com/job/%s/%s/artifact/amdgpu_kernel_info.txt"
-            % (job_name, build_num)
-        )
-        .read()
-        .decode("utf8")
-        .strip()
-    )
-
     cmd = [
         "amdgpu-repo",
-        "--amdgpu-build=%s" % amdgpu_build,
         "--rocm-build=%s/%s" % (job_name, build_num),
     ]
+
+    if install_amdgpu:
+        amdgpu_build = (
+            urllib.request.urlopen(
+                "http://rocm-ci.amd.com/job/%s/%s/artifact/amdgpu_kernel_info.txt"
+                % (job_name, build_num)
+            )
+            .read()
+            .decode("utf8")
+            .strip()
+        )
+
+        cmd.append("--amdgpu-build=%s" % amdgpu_build)
+
     LOG.info("Running %r", cmd)
     subprocess.check_call(cmd)
 
@@ -205,22 +217,22 @@ def _setup_internal_repo(system, rocm_version, job_name, build_num):
     subprocess.check_call(cmd, env=env)
 
 
-def install_rocm(rocm_version, job_name=None, build_num=None):
+def install_rocm(rocm_version, job_name=None, build_num=None, install_amdgpu=True):
     """Download and install the requested version of ROCm."""
 
     s = get_system()
 
     if job_name and build_num:
-        _setup_internal_repo(s, rocm_version, job_name, build_num)
+        _setup_internal_repo(s, rocm_version, job_name, build_num, install_amdgpu)
     else:
         if s == RHEL8:
-            setup_repos_el8(rocm_version)
+            setup_repos_el8(rocm_version, install_amdgpu)
         elif s == UBUNTU:
-            setup_repos_ubuntu(rocm_version)
+            setup_repos_ubuntu(rocm_version, install_amdgpu)
         else:
             raise RocmInstallException("Platform not supported")
 
-    s.install_rocm()
+    s.install_rocm(install_amdgpu)
 
 
 def install_amdgpu_installer_internal(rocm_version):
@@ -285,7 +297,7 @@ Pin-Priority: 600
 """
 
 
-def setup_repos_ubuntu(rocm_version_str):
+def setup_repos_ubuntu(rocm_version_str, install_amdgpu=True):
     """Configure an apt sources list entry for ROCm."""
 
     rv = parse_version(rocm_version_str)
@@ -306,11 +318,15 @@ def setup_repos_ubuntu(rocm_version_str):
     keyadd = "wget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | sudo apt-key add -"
     subprocess.check_call(keyadd, shell=True)
 
-    with open("/etc/apt/sources.list.d/amdgpu.list", "w") as fd:
-        fd.write(
-            ("deb [arch=amd64] " "https://repo.radeon.com/amdgpu/%s/ubuntu %s main\n")
-            % (rocm_version_str, codename)
-        )
+    if install_amdgpu:
+        with open("/etc/apt/sources.list.d/amdgpu.list", "w") as fd:
+            fd.write(
+                (
+                    "deb [arch=amd64] "
+                    "https://repo.radeon.com/amdgpu/%s/ubuntu %s main\n"
+                )
+                % (rocm_version_str, codename)
+            )
 
     with open("/etc/apt/sources.list.d/rocm.list", "w") as fd:
         fd.write(
@@ -327,7 +343,7 @@ def setup_repos_ubuntu(rocm_version_str):
     subprocess.check_call(["apt-get", "update"])
 
 
-def setup_repos_el8(rocm_version_str):
+def setup_repos_el8(rocm_version_str, install_amdgpu=True):
     """Configure a yum repo entry for ROCm."""
 
     rv = parse_version(rocm_version_str)
@@ -349,18 +365,34 @@ gpgkey=https://repo.radeon.com/rocm/rocm.gpg.key
             % rocm_version_str
         )
 
-    with open("/etc/yum.repos.d/amdgpu.repo", "w") as afd:
-        afd.write(
-            """
-[amdgpu]
-name=amdgpu
-baseurl=https://repo.radeon.com/amdgpu/%s/rhel/8.8/main/x86_64/
-enabled=1
-gpgcheck=1
-gpgkey=https://repo.radeon.com/rocm/rocm.gpg.key
-"""
-            % rocm_version_str
-        )
+    if install_amdgpu:
+        with open("/etc/yum.repos.d/amdgpu.repo", "w") as afd:
+            afd.write(
+                """
+    [amdgpu]
+    name=amdgpu
+    baseurl=https://repo.radeon.com/amdgpu/%s/rhel/8.8/main/x86_64/
+    enabled=1
+    gpgcheck=1
+    gpgkey=https://repo.radeon.com/rocm/rocm.gpg.key
+    """
+                % rocm_version_str
+            )
+
+
+def in_docker_env():
+    """Detect if we are running inside a docker container or not."""
+    if os.path.exists("/.dockerenv"):
+        LOG.info("detected docker env at /.dockerenv")
+        return True
+
+    with open("/proc/1/cgroup") as fd:
+        buf = fd.read()
+        if "docker" in buf:
+            LOG.info("detected docker cgroup in /proc/1/cgroup")
+            return True
+
+    return False
 
 
 def parse_args():
@@ -368,6 +400,17 @@ def parse_args():
     p.add_argument("--rocm-version", help="ROCm version to install", default="latest")
     p.add_argument("--job-name", default=None)
     p.add_argument("--build-num", default=None)
+    p.add_argument(
+        "--skip-amdgpu",
+        help=(
+            "Skips installation of AMDGPU packages. "
+            "These are kernel driver packages that shouldn't "
+            "be needed inside a container image. "
+            "By default, this option will be set if the script detects "
+            "it is running inside a container environment."
+        ),
+        action="store_true",
+    )
     return p.parse_args()
 
 
@@ -386,7 +429,15 @@ def main():
     else:
         rocm_version = args.rocm_version
 
-    install_rocm(rocm_version, job_name=args.job_name, build_num=args.build_num)
+    if in_docker_env():
+        args.skip_amdgpu = True
+
+    install_rocm(
+        rocm_version,
+        job_name=args.job_name,
+        build_num=args.build_num,
+        install_amdgpu=(not args.skip_amdgpu),
+    )
 
 
 if __name__ == "__main__":
